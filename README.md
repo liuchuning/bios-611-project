@@ -1,3 +1,22 @@
-# bios-611-project
+BIOS-611-project
+===============
 
-I am using the data in the first homework for my project, since I am really interested in doing a 0/1 classification problem, and the dataset is perfect for this.
+Build the docker image by typing:
+```
+docker build . -t 611-project
+```
+
+And then start an RStudio by typing:
+
+```
+docker run -e PASSWORD=hello --rm -v $(pwd):/home/rstudio/work -p 8787:8787 -t 611-project
+```
+
+Once the Rstudio is running connect to it by visiting
+https://localhost:8787 in your browser. 
+
+To build the final report, visit the terminal in RStudio and type
+
+```
+make report.pdf
+```
