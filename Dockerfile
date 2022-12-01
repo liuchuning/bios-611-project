@@ -1,3 +1,13 @@
 FROM rocker/verse
 RUN Rscript --no-restore --no-save -e "install.packages('tidyverse')"
-
+RUN Rscript --no-restore --no-save -e "install.packages('table1')"
+RUN Rscript --no-restore --no-save -e "install.packages('e1071')"
+RUN Rscript --no-restore --no-save -e "install.packages('caret')"
+RUN Rscript --no-restore --no-save -e "install.packages('ROCR')"
+RUN Rscript --no-restore --no-save -e "install.packages('devtools')"
+RUN Rscript --no-restore --no-save -e "install.packages('OptimalCutpoints')"
+RUN Rscript --no-restore --no-save -e "install.packages('car')"
+RUN Rscript --no-restore --no-save -e "install.packages('WeightSVM')"
+RUN Rscript --no-restore --no-save -e "install.packages('knitr')"
+RUN Rscript --no-restore --no-save -e "install.packages('kableExtra')"
+RUN Rscript --no-restore --no-save -e "install.packages('gridExtra')"

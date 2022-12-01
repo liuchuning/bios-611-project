@@ -1,10 +1,9 @@
 .PHONY: clean
 SHELL: /bin/bash
 
-report.pdf:\
+report.html:\
  report.Rmd
-	Rscript -e "rmarkdown::render('report.Rmd',output_format='pdf_document')"
+	Rscript -e "rmarkdown::render('report.Rmd',output_format='html_document')"
 
 clean:
-	rm -f derived_data/*.csv
-	rm -f report.pdf
+	rm -f report.html

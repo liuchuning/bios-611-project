@@ -2,25 +2,87 @@
 title: "BIOS 611 Final Project"
 author: "Camille Liu"
 date: "10/28/2022"
-output: pdf_document
+output: html_document
+bibliography: references.bib  
+csl: biomed-central.csl
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 # load packages
-pkgs <- list('tidyverse')
+pkgs <- list('tidyverse', 'table1', 'e1071', 'caret', 'ROCR', 
+             'devtools', 'OptimalCutpoints', 'car', 'WeightSVM', 
+             'knitr', 'kableExtra', 'gridExtra')
 lapply(pkgs, require, character.only = T)
-#load_all('./final')
 
+#load_all('./final')
 # run_from_scratch = FALSE uses saved model objects
 # set to TRUE if want to run from scratch
-run_from_scratch = FALSE
+
+run_from_scratch = F
 
 # read data
 dat_full <- read_delim("bank-full.csv", delim=';')
 ```
 
-(steps...)
+## Introduction
+
+The topic of our project is to improve the performance in telemarketing using predictive models. Telemarketing is a method of marketing directly to customers via phone or the Internet in order to sell goods or services. The telemarketing industry has a market size of $23.4 bn in 2022 and is still expecting a 2% growth in market [size](https://www.ibisworld.com/industry-statistics/market-size/telemarketing-call-centers-united-states/). A central challenge in telemarketing is in targeting individuals to sell goods or services. It would be costly to indiscriminately canvas everyone, but it would also be undesirable to target a random subset of the population as many potential sales could be lost. Thus, there is great interest in tools to identify the groups of individuals for whom telemarketing would likely result in sales and the groups of whom telemarketing is unlikely to be successful. Then, the firm could save resources by ignoring those in the latter group while not losing out on potential sales @marshall1988successfully. 
+
+In this project, we analysed a telemarketing dataset from a Portuguese retail bank [dataset](https://archive.ics.uci.edu/ml/datasets/bank+marketing) @moro2014data, which contains information on clients who were contacted by phone call to sell term deposit subscriptions (also known as certificate of deposits) and the outcome of the contact, which is a binary indicator for if the client subscribed a term deposit, which we call a "success". 
+
+The goal of this project was to build a classifier using the covariates listed in Table 1 to predict whether or not that client subscribed a term deposit. We chose F1 Score as the criterion to evaluate model performance, with accuracy, Kappa, sensitivity, and specificity as secondary metrics. We used support vector machines (SVM) as themodel. All analysis materials are in [Github](https://github.com/liuchuning/bios-611-project.git) page. 
+
+```{r DataDescription, results = "asis", echo = FALSE, message = FALSE}
+
+tex2markdown <- function(texstring) {
+  writeLines(text = texstring,
+             con = myfile <- tempfile(fileext = ".tex"))
+  texfile <- pandoc(input = myfile, format = "html")
+  cat(readLines(texfile), sep = "\n")
+  unlink(c(myfile, texfile))
+}
+
+textable <- "
+\\begin{table}[ht]
+\\centering
+\\caption{Table 1: Description of variables in telemarketing data set}
+\\begin{tabular}{| l | l |}
+\\hline
+Feature Name & Description   \\\\
+\\hline
+age          & numeric  \\\\
+job          & type of job (categorical) \\\\
+marital      & marital status (categorical: married, divorced, single) \\\\
+education    & (categorical: unknown,secondary, primary, tertiary) \\\\
+default      & has credit in default? (binary: yes, no)\\\\
+balance      & average yearly balance, in euros (numeric)\\\\
+housing      & has housing loan? (binary: yes, no)\\\\
+loan         & has personal loan? (binary: yes, no)\\\\
+contact      & contact communication type (categorical: unknown, telephone, cellular)\\\\
+day          & last contact day of the month (numeric)\\\\
+month        & last contact month of year (categorical: jan, feb, mar, ..., nov, dec)\\\\
+duration     & last contact duration, in seconds (numeric)\\\\
+campaign     & number of contacts performed during this campaign and for this client (numeric)\\\\
+pdays        & number of days that passed by after last contacted from a previous campaign (numeric) \\\\
+previous     & number of contacts performed before this campaign and for this client (numeric) \\\\
+poutcome     & outcome of previous campaign (categorical: unknown, other, failure, success) \\\\
+outcome      & has the client subscribed a term deposit? (binary: yes, no)                                                                                                               
+\\end{tabular}
+\\end{table}
+"
+
+tex2markdown(textable)
+```
+
+## Data description and pre-processing
+
+There are four datasets available. We chose the dataset with 16 features and all 45,211 observations (called `bank-full.csv` on the source website). To ease computational burden, we randomly selected 20 percent of the data for our analysis dataset(`dat.working`), which includes 9,042 observations.
+
+The features are described in Table 1 and summary statistics are computed and shown in Table 2. The features include some basic demographic and financial information on clients as well as some information on previous contacts. There were some missing values in the categorical features and these observations were treated as their own category, "unknown," and are shown in Table 2. We also collapsed months into quarters. The feature `pdays` was mostly missing (80%) so it was dropped from the analysis dataset. Additionally, the feature `duration` refers to the duration of the phone call that corresponds to the outcome variable and was therefore also dropped from the analysis dataset since the goal was to predict prospectively. 
+Continuous variables were centered and scaled by two standard deviations to be put on approximately the same scale as categorical covariates @gelman. This transformation allows coefficients to be readily and easily interpreted while also allowing for each term to be penalized approximately the same. As a sensitivity check, regular standardization (centering and scaling by one standard deviation) was performed on all covariates and the analysis re-run for SVM, and we found no substantial differences in results. 
+
+The binary outcome variable is highly imbalanced, with 7983 (88%) failures and 1059 (12%) successes. 
 
 
 ```{r DataPreprocessing, warning=FALSE}
@@ -44,14 +106,101 @@ dat.working <- dat %>%
   slice_sample(prop = 0.2) # select subset
 ```
 
-```{r SelectTrain/test}
 
-# put continuous vars on same scale as indicators
-# put here b/c want summary table/figures to show on raw scale
+```{r table1}
+table1(~.|y, data = dat.working,
+       caption = 'Table 2: Summary of features, by observed success/failure')
+```
+
+<br>
+
+Figures 1-4 show some insights from the data. Figure 1 shows a density plot of age by subscription status. Most individuals in the data are between 25 and 60 years old. Additionally, relatively more individuals subcribed than not at the extremes of the age distribution.  
+
+```{r AgePlot1}
+ggplot(dat.working, aes(x = age, fill = y)) + 
+  geom_density(alpha = 0.5,position = 'stack') + 
+  theme_classic() +
+  labs(title = 'Figure 1: Age density plot by subscribed status',
+       fill = 'Subscribed',
+       x = 'Age',
+       y = 'Density')
+```
+
+Figure 2 shows the distribution of mean yearly balance over age group. Older age groups had a larger yearly balance, on average, compared to younger age groups, with the exception of the oldest age group. 
+
+```{r AgePlot2, include=FALSE}
+data_new = dat.working %>%
+  select(age, balance)%>%
+  mutate(age_group =  case_when(age < 20 ~ "<20",
+                                
+                           30 > age & age >= 20 ~ "20-30",
+                           40> age & age >= 30 ~ "30-40",
+                         50 > age & age >= 40 ~ "40-50",
+                           60 > age & age >= 50 ~ "50-60",
+                         70 > age & age >= 60 ~ "60-70",
+                         80 > age & age >=70 ~ "70-80",
+                         age >= 80 ~ "80-100"
+                         
+                         ))%>%
+  group_by(age_group)%>%
+  summarise(mean_balance = sum(balance)/n() )
+```
+
+```{r AgePlot3}
+ggplot(data_new, aes( y=mean_balance, x=age_group)) + 
+    geom_bar(position="dodge", stat="identity",fill = 'plum3') +
+  labs(title = 'Figure 2: Mean yearly balance, averaged by age group',
+       x = 'Age group',
+       y = 'Mean yearly balance') + 
+  theme_minimal()
+
+```
+
+Figure 3 shows the total number of campaigns by job type for subscribers and non-subscribers. It shows the amount of effort the bank pursued each occupation group. However, this plot may just reflect the number of each job type in the population and sample. Figure 4 shows the average number of campaigns, and we observe that the bank pursued each group by proportionally similar amounts. 
+
+```{r CampaignPlot}
+# unknown <- c('unknown')
+# no_income <- c('unemployed','student')
+# low_income <- c('blue-collar','housemaid','retired','self-employed')
+# high_income <- c('admin.','entrepreneur','management','services','technician')
+# dat_plot <- dat_full
+# dat_plot$job<-recode(dat_plot$job,"unknown='unknown'; no_income='no_income';
+#                       low_income = 'low_income'; high_income = 'high_income'")
+
+dat_plot = dat.working %>%
+  group_by(job, y) %>%
+  summarize(avg_campaign = mean(campaign),
+            tot_campaign = sum(campaign)) %>%
+  ungroup()
+
+ggplot(dat_plot, aes(fill=y, y=tot_campaign, x=reorder(job, tot_campaign, function(x) x[2]))) + 
+  geom_bar(position='dodge', stat='identity', width=0.8) + 
+  theme_classic() + 
+  labs(fill = "Subscribed",
+       title = 'Figure 3: Total number of campaigns sent for each job type',
+       y = 'Total campaigns',
+       x = 'Job type') + 
+  coord_flip() +
+  scale_fill_manual(values = c("burlywood1","darkolivegreen3"))
+
+ggplot(dat_plot, aes(fill=y, y=avg_campaign, x=reorder(job, avg_campaign, function(x) x[2]))) + 
+  geom_bar(position='dodge', stat='identity', width=0.8) + 
+  theme_classic() + 
+  labs(fill = "Subscribed",
+       title = 'Figure 4: Average number of campaigns sent for each job type',
+       y = 'Average campaigns',
+       x = 'Job type') + 
+  coord_flip() +
+  scale_fill_manual(values = c("burlywood1","darkolivegreen3"))
+```
+
+```{r SelectTrain/test}
 scale2sd <- function(x) {
   (x - mean(x) )/ (2*sd(x))
 }
 
+# put continuous vars on same scale as indicators
+# put here b/c want summary table/figures to show on raw scale
 dat.working = dat.working %>%
   mutate(age = scale2sd(age),
          campaign = scale2sd(campaign),
@@ -60,15 +209,187 @@ dat.working = dat.working %>%
 
 # select training and testing data
 set.seed(100)
-# y <- dat.working$y
-# index <- createDataPartition(
-#   y,
-#   times = 1,
-#   p = 0.8,
-#   list = F,
-#   groups = min(5, length(y))
-# )
-# dat_train <- dat.working[index,]
-# dat_test <- dat.working[-index,]
+y <- dat.working$y
+index <- createDataPartition(
+  y,
+  times = 1,
+  p = 0.8,
+  list = F,
+  groups = min(5, length(y))
+)
+dat_train <- dat.working[index,]
+dat_test <- dat.working[-index,]
 
 ```
+
+## Methods
+
+### SVM
+
+Support vector machines were chosen for their flexibility and good out-of-box performance for classification. By fitting SVM using both linear and RBF kernels, we allow for flexibility in the relationship between the outcome and features. 
+
+We held out 20 percent of the data as a test set for final model performance evaluation. The remaining 80 percent of the data was used as training data to select hyperparameters in the SVM models. We chose F1 score as our final metric for model comparison. F1 score is the harmonic mean of the precision and recall: $F1 = \frac{2(P \cdot R)}{P+R}$, where $P$ is the precision: $\frac{TP}{TP + FP}$, and $R$ is the recall of the classification model: $\frac{TP}{TP + FN}$, where $TP$ is the number of true positives, $FP$ is the number of false positives, and $FN$ is the number of false negatives.
+
+Support vector machines (SVM) @cortes1995support are a popular machine learning method for binary classification. SVM classifies observations by separating the feature space into two classes according to some decision boundary form with the goal of maximizing the number of correct classifications while allowing for some mis-classifications for identifiability and to prevent over-fitting. The form of the decision boundary is controlled by choice of the kernel function. We fitted SVM models using linear and radial kernels. 
+
+Formally, SVM solves the following Lagrangian dual
+
+\begin{equation}
+	\begin{split}
+		\max_{\substack{\alpha}}  \sum_{i=1}^{n} \alpha_i - \frac{1}{2} \sum_{i, j = 1}^{n} y_i y_j \alpha_i \alpha_j K(x_i, x_j) \\
+		\text{s.t. } 0 \leq \alpha_i \leq C, i=1,\dots, n \text{ and } \sum_{i=1}^{n} \alpha_i y_i = 0
+	\end{split}
+\end{equation}
+
+where $y \in \{-1, 1\}$ are the classification labels, $\alpha$ are the Lagrangian multipliers, $C$ is a tuning parameter chosen by cross-validation, and $K(x, x')$ represents the kernel function. The linear kernel corresponds to the dot product between $x$ and $x'$, and the radial kernel corresponds to $K(x, x') = \exp\left(  \gamma ||x-x'||^2 \right)$ where $\gamma$ is a tuning parameter that will be chosen by cross-validation. 
+
+Since SVM is not good at handling class imbalance in the sense that it favors the majority class, we performed weighted SVM instead. In our dataset, the majority class are the negatives i.e. $Y=-1$. For the class $Y=-1$, the weight equals $\frac{1}{n} \sum_{i=1}^n I(Y_i=1)$ and for the class $Y=1$, the weight equals $1-\frac{1}{n} \sum_{i=1}^n I(Y_i=1)$. Thus, we down-weighted the majority class and up-weighted the minority class.
+
+We fit SVM using the R packages `e1071` and `WeightSVM`.  
+
+### Model evaluation
+
+We used 5-fold cross validation to select tuning parameters for SVM. For SVM, we used both a linear kernel and a radial basis function (RBF) kernel. SVM with a linear kernel contains a penalization hyperparameter $C$, and SVM with an RBF kernel contains a penalization hyperparameter $C$ as well as a tuning parameter $\gamma$ which accounts for the smoothness of the decision boundary and controls the variance of the model. For the linear kernel we test $C=(0.001, 0.01, 0.1, 1, 5)$ and for the RBF kernel we test all combinations of $C=(0.001, 0.01, 0.1, 1)$ and $\gamma=(0.03125, 0.12500, 0.50000, 2.00000)$. The error function to minimize was the mis-classification rate. 
+
+```{r WeightedSVM}
+# weights for svm
+x <- model.matrix(y~., dat_train)[,-1]
+x.test <- model.matrix(y~., dat_test)[,-1]
+y2 <- ifelse(dat_train$y == "yes", 1, 0)
+
+w = rep(mean(y2), nrow(dat_train))
+w = ifelse(y2==1, 1-w, w)
+
+# Linear SVM
+if (run_from_scratch) {
+  
+  # set seed
+  set.seed(100)
+  
+  # do CV and select best model
+  best.linear = best.tune_wsvm(train.x=x, train.y=dat_train$y, weight=w, ranges=list(cost=c(0.001, 0.01, 0.1, 1, 5)),
+                             tunecontrol=tune.control(sampling='cross', cross=5),
+                             kernel='linear', scale=FALSE)
+  
+  # save
+  saveRDS(best.linear, 'cv_sim_lin.rds')
+  
+} else {
+  best.linear = readRDS('cv_sim_lin.rds')
+}
+
+# Radial SVM
+if (run_from_scratch) {
+  
+  # set seed
+  set.seed(100)
+  
+  # do CV and select best model
+  best.radial = best.tune_wsvm(train.x=x, train.y=dat_train$y, weight=w,
+                             ranges=list(cost=c(0.001, 0.01, 0.1, 1),
+                                         gamma=2^seq(-5,2,by=2)),
+                             tunecontrol=tune.control(sampling='cross', cross=5),
+                             kernel='radial', scale=FALSE)
+  
+  # save
+  saveRDS(best.radial, file = "radial_svm.RDS")
+  
+} else {
+  best.radial = readRDS('radial_svm.RDS')
+}
+```
+
+## Results
+
+For the SVM models, the chosen cost hyperparameter for the linear kernel was 0.1, and for the RBF kernel, the chosen cost and $\gamma$ were 1 and 0.125, respectively. The numbers of support vectors are 5215 and 5415, respectively, for linear and kernel SVM.
+
+
+```{r ResultAll1}
+# train data; svm linear
+svm.pred.lin.train <- predict(best.linear)
+svm.lin.train.res = confusionMatrix(svm.pred.lin.train, dat_train$y, positive = 'yes')$byClass
+
+# train data; svm radial
+svm.pred.rad.train <- predict(best.radial)
+svm.rad.train.res = confusionMatrix(svm.pred.rad.train, dat_train$y, positive = 'yes')$byClass
+
+# test data; svm linear
+svm.pred.lin.test <- predict(best.linear, x.test)
+svm.lin.test.res = confusionMatrix(svm.pred.lin.test, dat_test$y, positive = 'yes')$byClass
+
+# test data; svm radial
+svm.pred.rad.test <- predict(best.radial, x.test)
+svm.rad.test.res = confusionMatrix(svm.pred.rad.test, dat_test$y, positive = 'yes')$byClass
+
+# put it all into a dataframe
+pred_metrics = tibble(Metric = names(svm.lin.train.res),
+                      `SVM linear kernel, train` = svm.lin.train.res,
+                      `SVM radial kernel, train` = svm.rad.train.res,
+                      `SVM linear kernel, test` = svm.lin.test.res,
+                      `SVM radial kernel, test` = svm.rad.test.res)
+```
+
+```{r ResultAll2}
+# display results
+kable(pred_metrics, caption='Table 3', 
+      digits=3, format='html', row.names=FALSE)
+```
+
+<br>
+
+```{r, fig.cap="Figure 7: Confusion matrices for all three models predicted on test set"}
+
+# function to create data frames w/ confusion matrix vals
+create_conf_df <- function(pred, actual) {
+  dat = data.frame(Predicted = c('no', 'yes', 'no', 'yes'),
+                   Actual = c('no', 'no', 'yes', 'yes'),
+                   props = c(mean(pred=='no' & actual=='no'),
+                             mean(pred=='yes' & actual=='no'),
+                             mean(pred=='no' & actual=='yes'),
+                             mean(pred=='yes' & actual=='yes')))
+  dat$props = round(dat$props, 3)
+  return(dat)
+}
+
+# create confusion matrix df for each model on test data
+conf.svm.lin = create_conf_df(svm.pred.lin.test, dat_test$y)
+conf.svm.rad = create_conf_df(svm.pred.rad.test, dat_test$y)
+
+# create ggplot objects
+gg.svm.lin = ggplot(data =  conf.svm.lin, mapping = aes(x = Actual, y = Predicted)) +
+  geom_tile(colour = "black", fill='white') +
+  geom_text(aes(label = props), vjust = 1) +
+  theme(legend.position = "none") +
+  labs(title = '(a) SVM with linear kernel') +
+  scale_y_discrete(limits=rev)
+
+gg.svm.rad = ggplot(data =  conf.svm.rad, mapping = aes(x = Actual, y = Predicted)) +
+  geom_tile(colour = "black", fill='white') +
+  geom_text(aes(label = props), vjust = 1) +
+  theme(legend.position = "none") +
+  labs(title = '(b) SVM with radial kernel') +
+  scale_y_discrete(limits=rev)
+
+# plot
+grid.arrange(gg.svm.lin, gg.svm.rad, nrow=2)
+
+```
+
+<br>
+
+Table 3 shows all the model performance evaluation metrics using the two methods on training and testing datasets, and Figure 7 shows the confusion matrices for the predictions of each method on the testing dataset.
+
+From Table 3, we can see that the test set F1 score for linear kernel SVM and radial kernel SVM are similar (0.362 and 0.380, respectively). Examining the confusion matrices in Figure 7 shows that the predictions of each method were similar as well. Radial SVM correctly predicted slightly more observations. Overall, radial SVM had higher sensitivity (0.621 vs. 0.592) and specificity (0.782 vs. 0.778) on testing set. 
+
+## Discussion
+
+Both two methods yielded roughly equivalent F1 scores. When comparing secondary metrics, the two SVM models again performed roughly similar with the Radial one slightly better. The raw mis-classification error for all models was also lower than the naive model of predicting failure for all clients (12 percent). This observation points to how optimizing for different metrics can yield very different conclusions as to what constitutes the best model. 
+
+For example, if we imagine that the bank under study desired a prediction tool which could screen out individuals who were very unlikely to subscribe a term deposit. In this case, they would want to minimize the number of false negatives while maximizing the number of true negatives. Equivalently, this would mean maximizing the negative predictive value. We could also imagine the bank wanting a small list of clients to target but also wanting to not leave out any individuals who would actually subscribe a term deposit. Then, this would be equivalent to maximizing sensitivity, or the ratio of true positives to false negatives. 
+
+Finally, we note two limitations of any prediction model using this dataset. First, applying models based on historical data to future populations requires an assumption of transportability. If the future population is substantially different from the historical population the model is based on, in the sense that their relationship to the outcome variable has changed, then that would limit the applicability of the model. For example, consider if this data was collected during a period of general confidence in banks and financial systems. Now imagine an event happens after the data is collected such as a recession or banking failure which reduces confidence in banks for many individuals. If confidence in banks is important for whether or not an individuals subscribes a term deposit, and if there is no way to predict this variable, then models trained on the historical data would have limited utility.
+
+Second, we note the limitation that the outcome variable is binary, when in practice, it is likely that banks would care about the amount which an individual deposits. 
+
+
+## References
